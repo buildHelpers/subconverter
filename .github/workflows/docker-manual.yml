@@ -1,0 +1,82 @@
+name: Build and Push Docker Image (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Docker image tag (default: latest)'
+        required: false
+        default: 'latest'
+        type: string
+      push:
+        description: 'Push to registry'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get commit SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ inputs.tag }}
+            type=raw,value=${{ inputs.tag }}-${{ steps.vars.outputs.sha_short }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: scripts/
+          file: scripts/Dockerfile
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SHA=${{ steps.vars.outputs.sha_short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image info
+        if: ${{ inputs.push }}
+        run: |
+          echo "Image built and pushed successfully!"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}"
+          echo "Image with SHA: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}-${{ steps.vars.outputs.sha_short }}"
+      - name: Output image info (no push)
+        if: ${{ !inputs.push }}
+        run: |
+          echo "Image built successfully (not pushed)!"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
+
